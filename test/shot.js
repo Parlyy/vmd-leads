@@ -1,0 +1,14 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1360,height:860}});
+const errs=[];p.on('pageerror',e=>errs.push(e.message));p.on('console',m=>{if(m.type()==='error')errs.push(m.text())});
+await p.goto('file://'+process.cwd()+'/test/out/index.html');await p.waitForTimeout(600);
+await p.screenshot({path:'test/board.png'});
+await p.click('.card >> nth=0');await p.waitForTimeout(400);await p.screenshot({path:'test/sheet.png'});
+await p.click('#sh-close');await p.click('[data-view="replies"]');await p.waitForTimeout(200);await p.screenshot({path:'test/replies.png'});
+await p.click('[data-view="mail"]');await p.waitForTimeout(200);await p.screenshot({path:'test/mail.png'});
+await p.click('[data-view="today"]');await p.waitForTimeout(200);await p.screenshot({path:'test/today.png'});
+await p.click('[data-view="stats"]');await p.waitForTimeout(200);await p.screenshot({path:'test/stats.png'});
+await p.click('[data-view="replies"]');await p.click('[data-edit-tpl="first_photos"]');await p.waitForTimeout(200);await p.screenshot({path:'test/edit.png'});
+await p.click('[data-m="cancel"]');
+await p.click('#addBtn');await p.waitForTimeout(400);await p.fill('#f-name','Test Person');await p.waitForTimeout(900);
+const t=await p.textContent('#sh-title');console.log('title',t,'errors',JSON.stringify(errs));await b.close()})();

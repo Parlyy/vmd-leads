@@ -1,0 +1,10 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1360,height:860}});
+const errs=[];p.on('pageerror',e=>errs.push(e.message));
+await p.route('https://script.google.com/**',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({text:"Subject: Your quote — VM Diamond Construction\n\nHello Sarah,\n\nThank you for your patience. The price for the drywall patch is $450 + GST...\n\nBest regards,\nVM Diamond Construction"})}));
+await p.goto('file://'+process.cwd()+'/test/out/index.html');await p.waitForTimeout(600);
+await p.evaluate(()=>localStorage.setItem('vmd-claude-url','https://script.google.com/macros/s/x/exec'));
+await p.click('.card:has-text("Sarah")');await p.waitForTimeout(300);
+await p.fill('#aiInstr','скажи цену 450');await p.click('[data-act="aiDraft"]');await p.waitForTimeout(800);
+await p.evaluate(()=>document.querySelector('.panel.ai').scrollIntoView());await p.waitForTimeout(200);
+await p.screenshot({path:'test/claude.png'});console.log('errors',JSON.stringify(errs));await b.close()})();

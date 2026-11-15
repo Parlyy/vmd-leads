@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://*.cloudfunctions.net https://script.google.com https://script.googleusercontent.com">
+<title>VMD Leads</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="loginForm" class="login-card" autocomplete="on">
+    <div class="logo">◆ VM DIAMOND</div>
+    <h1>Заявки</h1>
+    <p class="muted">Войди под email и паролем, которые созданы в Firebase.</p>
+    <label for="lEmail">Email</label>
+    <input id="lEmail" type="email" autocomplete="username" required>
+    <label for="lPass">Пароль</label>
+    <input id="lPass" type="password" autocomplete="current-password" required>
+    <button class="btn gold big" type="submit" id="lBtn">Войти</button>
+    <div class="err" id="lErr" hidden></div>
+    <div class="cfgwarn" id="cfgWarn" hidden>Приложение ещё не подключено к Firebase (нет ключей в config.js).</div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="bar">
+    <div class="brand"><b>VM DIAMOND</b><span>Заявки</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="board">Доска</button>
+      <button role="tab" data-view="today">Сегодня <span class="cnt" id="todayCnt">0</span></button>
+      <button role="tab" data-view="replies">Быстрые ответы</button>
+      <button role="tab" data-view="mail">Рассылка</button>
+      <button role="tab" data-view="stats">Статистика</button>
+    </nav>
+    <input class="search" id="q" type="search" placeholder="Поиск: имя, телефон, работа…">
+    <button class="btn gold" id="addBtn">+ Заявка</button>
+    <div class="menu-wrap">
+      <button class="iconbtn" id="menuBtn" aria-label="Меню">⋯</button>
+      <div class="menu" id="menu" hidden>
+        <div class="menu-who" id="who"></div>
+        <button data-menu="claude">Подключение Claude…</button>
+        <button data-menu="export">Сохранить резервную копию…</button>
+        <button data-menu="import">Импорт из файла…</button>
+        <button data-menu="logout">Выйти</button>
+        <div class="menu-who" id="ver" style="border:0;border-top:1px solid var(--line);margin:4px 0 0"></div>
+      </div>
+    </div>
+  </header>
+  <div class="updbar" id="updBar" hidden><span id="updText"></span><button class="btn gold sm" id="updBtn">Обновить сейчас</button></div>
+  <div class="banner" id="banner" hidden></div>
+  <main id="main"><div class="loading">Загружаю заявки…</div></main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="sheet" id="sheet" aria-hidden="true">
+  <div class="sheet-h"><h3 id="sh-title">Заявка</h3><span class="saved" id="savedLbl"></span><button class="x" id="sh-close" aria-label="Закрыть">×</button></div>
+  <div class="sheet-b" id="sh-body"></div>
+</aside>
+
+<div class="modal-bg" id="modalBg" hidden>
+  <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

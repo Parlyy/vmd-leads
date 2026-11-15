@@ -1,0 +1,55 @@
+{
+  "name": "vmd-leads",
+  "productName": "VMD Leads",
+  "version": "1.0.0",
+  "description": "VM Diamond Construction — заявки клиентов",
+  "author": "VM Diamond Construction Ltd.",
+  "main": "main.js",
+  "scripts": {
+    "bundle": "node build.mjs",
+    "start": "npm run bundle && electron .",
+    "dist:win": "npm run bundle && electron-builder --win nsis --x64",
+    "dist:mac": "npm run bundle && electron-builder --mac zip --arm64 --x64"
+  },
+  "build": {
+    "appId": "ca.vmdiamondconstruction.leads",
+    "productName": "VMD Leads",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "build/icon.png"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "VMD Leads",
+      "artifactName": "VMD-Leads-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": "zip",
+      "icon": "build/icon.png",
+      "category": "public.app-category.business",
+      "identity": null,
+      "artifactName": "VMD-Leads-${version}-mac-${arch}.${ext}"
+    },
+    "publish": null
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "esbuild": "0.24.0",
+    "firebase": "11.1.0"
+  },
+  "dependencies": {}
+}

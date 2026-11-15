@@ -1,0 +1,12 @@
+import { build } from "esbuild";
+import { mkdirSync, copyFileSync, readFileSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
+mkdirSync("renderer", { recursive: true });
+const version = Number(readFileSync("src/ui-version.txt", "utf8").trim());
+await build({ entryPoints: ["src/app.js"], bundle: true, minify: true, format: "iife", target: "chrome128", outfile: "renderer/app.js", legalComments: "none", define: { __UI_VERSION__: String(version) } });
+copyFileSync("src/index.html", "renderer/index.html");
+copyFileSync("src/style.css", "renderer/style.css");
+const files = {};
+for (const f of ["index.html", "app.js", "style.css"]) files[f] = createHash("sha256").update(readFileSync("renderer/" + f)).digest("hex");
+writeFileSync("renderer/version.json", JSON.stringify({ version, files }, null, 2));
+console.log("bundled UI v" + version);
