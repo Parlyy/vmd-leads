@@ -118,7 +118,7 @@ function setStatus(L, s) {
 function markSaved() { const s = $("savedLbl"); s.textContent = "Сохранено"; clearTimeout(markSaved.t); markSaved.t = setTimeout(() => (s.textContent = ""), 1500); }
 
 /* ---------- derived ---------- */
-function filtered() { if (!query) return leads; const q = query.toLowerCase(); return leads.filter((L) => [L.name, L.phone, L.email, L.service, L.job, L.area, L.source].join(" ").toLowerCase().includes(q)); }
+function filtered() { if (!query) return leads; const q = query.toLowerCase(); return leads.filter((L) => [L.name, L.phone, L.email, L.service, L.job, L.summary, L.area, L.source, L.clientMessage].join(" ").toLowerCase().includes(q)); }
 function dueState(L) { if (!L.followUp || L.status === "won" || L.status === "lost") return ""; const t = todayStr(); return L.followUp < t ? "overdue" : L.followUp === t ? "due" : ""; }
 function todayBuckets() {
   const t = todayStr(), now = Date.now();
@@ -135,7 +135,7 @@ function cardHTML(L) {
   const ds = dueState(L);
   return `<button class="card ${ds}" draggable="true" data-id="${esc(L.id)}">
     <div class="top"><span class="nm">${esc(L.name || "Без имени")}</span><span class="age">${ago(L.createdAt)}</span></div>
-    <div class="svc">${esc(L.job || ru(SVC_RU, L.service))}${L.area ? " · " + esc(L.area) : ""}</div>
+    <div class="svc">${esc(L.summary || L.job || ru(SVC_RU, L.service))}${L.area ? " · " + esc(L.area) : ""}</div>
     <div class="meta"><span class="tag">${esc(ru(SRC_RU, L.source))}</span>
       ${ds === "overdue" ? `<span class="tag bad">Просрочено: ${fmtDate(L.followUp)}</span>` : ds === "due" ? `<span class="tag warn">Связаться сегодня</span>` : L.followUp && L.status !== "won" && L.status !== "lost" ? `<span class="tag gold">${fmtDate(L.followUp)}</span>` : ""}
       ${L.status === "won" ? (L.reviewAsked ? `<span class="tag ok">Отзыв попросили</span>` : `<span class="tag warn">Попросить отзыв</span>`) : ""}
@@ -274,7 +274,7 @@ function renderSheet() {
     ${L.email ? `<div class="crow"><code>${esc(L.email)}</code><button class="btn sm" data-open="${esc("mailto:" + L.email)}">Написать</button><button class="btn sm" data-copy="${esc(L.email)}">Копировать</button></div>` : ""}
     ${!L.phone && !L.email ? `<span class="saved">Добавь телефон или email ниже.</span>` : ""}
   </div></div>
-  ${L.clientMessage ? `<div class="panel"><h4>Сообщение клиента</h4><div class="preview">${esc(L.clientMessage)}</div></div>` : ""}
+  ${L.clientMessage || L.summary ? `<div class="panel"><h4>Сообщение клиента</h4>${L.summary ? `<p style="margin:0 0 8px;font-weight:600">${esc(L.summary)}</p>` : ""}${L.clientMessage ? `<div class="preview">${esc(L.clientMessage)}</div>` : ""}</div>` : ""}
   <div class="panel ai"><h4>✦ Claude</h4>
     <div class="field"><label for="aiInstr">Что написать клиенту? (можно по-русски, можно оставить пустым)</label><textarea id="aiInstr" rows="2" placeholder="напр. скажи что цена $450, можем в среду или четверг утром">${esc(ai.forId === L.id ? ai.instr : "")}</textarea></div>
     <div class="crow"><div class="chips"><button class="chip" data-aich="email" aria-pressed="${ai.channel === "email"}">Email</button><button class="chip" data-aich="sms" aria-pressed="${ai.channel === "sms"}">SMS</button></div>

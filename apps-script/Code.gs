@@ -53,10 +53,14 @@ function importLeads() {
 }
 
 function parseFormEmail_(msg) {
-  var body = msg.getPlainBody() || '';
+  // Squarespace plain text looks like: "*Name:* John Smith \n\n*Email:* ...". Strip the * markers first.
+  var raw = (msg.getPlainBody() || '').replace(/\r/g, '');
+  var body = raw.replace(/\*([^*\n]{1,80}?:)\*/g, '$1');
+  // The notification repeats the fields after the "Sent via form submission" line; keep only the first copy.
+  body = body.split(/\n\s*Sent via form submission/i)[0];
   var get = function (labels) {
     for (var i = 0; i < labels.length; i++) {
-      var re = new RegExp('^\\s*' + labels[i] + '\\s*[:\\n]\\s*(.+)$', 'im');
+      var re = new RegExp('(?:^|\\n)[ \\t]*' + labels[i] + '[ \\t]*:[ \\t]*([^\\n]*)', 'i');
       var m = body.match(re);
       if (m && m[1].trim()) return m[1].trim();
     }
@@ -64,18 +68,92 @@ function parseFormEmail_(msg) {
   };
   var name = get(['Full name', 'Name']);
   if (!name) { var fn = get(['First Name']), ln = get(['Last Name']); name = (fn + ' ' + ln).trim(); }
-  var email = get(['Email', 'Email Address']);
+  name = name.replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  var email = extractEmail_(get(['Email', 'Email Address']));
   var replyTo = msg.getReplyTo();
   if (!email && replyTo && replyTo.indexOf('squarespace') < 0) email = extractEmail_(replyTo);
-  var phone = get(['Phone \\(optional\\)[^:\\n]*', 'Phone', 'Phone Number']);
+  var phone = get(['Phone \\(optional\\)[^:\\n]*', 'Phone Number', 'Phone']);
+  if (phone && !/\d{3}/.test(phone)) phone = '';
   var message = '';
-  var mm = body.match(/(^|\n)\s*Message[^:\n]*[:\n]\s*([\s\S]*)/i);
-  if (mm) message = mm[2].split(/\n\s*(?:File Upload|Sent via form submission|\(Sent via)/i)[0].trim();
+  var mm = body.match(/(?:^|\n)[ \t]*Message[^:\n]*:[ \t]*([\s\S]*)/i);
+  if (mm) message = mm[1].split(/\n\s*(?:File Upload|Manage Submissions|\(Sent via)/i)[0];
+  message = message.replace(/[ \t]*\n(?!\n)[ \t]*/g, ' ').replace(/\n{2,}/g, '\n').trim();
   if (!name && !email && !phone) return null;
   return {
     name: name, email: email, phone: phone, source: 'Website form',
-    message: message || body.slice(0, 1500), subject: msg.getSubject(), date: msg.getDate()
+    message: message || body.slice(0, 1500).trim(), subject: msg.getSubject(), date: msg.getDate()
   };
+}
+
+/* ---------- short summary of what the client wants ---------- */
+var TOPICS = [
+  { k: 'framing', svc: 'Framing & insulation', ru: 'каркас', re: /\bfram(e|ing|ed)\b|\bstud(s)?\b|bulkhead|partition wall|build (a )?wall/i },
+  { k: 'insulation', svc: 'Framing & insulation', ru: 'утепление', re: /insulat|vapou?r barrier|spray foam|batt/i },
+  { k: 'drywall', svc: 'Drywall & taping', ru: 'гипсокартон', re: /drywall|sheetrock|gyproc|\bmud(ding)?\b|\btap(e|ing)\b|patch|hole in (the )?wall|ceiling crack/i },
+  { k: 'painting', svc: 'Interior painting', ru: 'покраска', re: /paint/i },
+  { k: 'plumbing', svc: 'Plumbing', ru: 'сантехника', re: /plumb|toilet|faucet|tap leak|sink|shower|\btub\b|bathtub|valve|water heater|softener|leak|drain|pipe/i },
+  { k: 'flooring', svc: 'Renovation', ru: 'пол', re: /floor|laminate|vinyl plank|tile/i },
+  { k: 'doors', svc: 'Repairs & handyman', ru: 'двери/фурнитура', re: /\bdoor|handle|lock|hinge|knob/i },
+  { k: 'stairs', svc: 'Repairs & handyman', ru: 'лестница/перила', re: /stair|railing|handrail/i },
+  { k: 'repairs', svc: 'Repairs & handyman', ru: 'мелкий ремонт', re: /repair|fix|handyman|install|mount|shelf|trim|baseboard/i },
+  { k: 'renovation', svc: 'Renovation', ru: 'ремонт', re: /renovat|remodel|finish(ing)? (the )?basement|develop(ing|ment)? (the )?basement/i }
+];
+var PLACES = [
+  { en: 'basement', ru: 'подвал', re: /basement/i }, { en: 'garage', ru: 'гараж', re: /garage/i },
+  { en: 'bathroom', ru: 'ванная', re: /bath ?room|washroom/i }, { en: 'kitchen', ru: 'кухня', re: /kitchen/i },
+  { en: 'bedroom', ru: 'спальня', re: /bedroom/i }, { en: 'living room', ru: 'гостиная', re: /living room/i },
+  { en: 'laundry room', ru: 'прачечная', re: /laundry/i }, { en: 'mechanical room', ru: 'техкомната', re: /mechanical room|furnace room/i }
+];
+
+function analyzeRules_(text) {
+  var t = String(text || '');
+  var hits = TOPICS.filter(function (x) { return x.re.test(t); });
+  if (hits.some(function (h) { return h.k !== 'repairs'; })) hits = hits.filter(function (h) { return h.k !== 'repairs'; });
+  if (hits.some(function (h) { return h.k === 'framing' || h.k === 'drywall'; })) hits = hits.filter(function (h) { return h.k !== 'renovation'; });
+  var place = PLACES.filter(function (p) { return p.re.test(t); })[0];
+  var size = (t.match(/\b\d{1,3}\s*(?:x|\*|×|by)\s*\d{1,3}\b(?:\s*(?:ft|feet|'))?/i) || [''])[0];
+  var area = (t.match(/\b(NW|NE|SW|SE)\b/i) || [''])[0].toUpperCase();
+  var names = hits.slice(0, 3).map(function (h) { return h.k === 'repairs' ? 'repairs' : h.k === 'doors' ? 'door hardware' : h.k === 'stairs' ? 'stairs and railing' : h.k === 'plumbing' ? 'plumbing work' : h.k; });
+  var job = names.length ? names.join(names.length > 2 ? ', ' : ' and ').replace(/, ([^,]*)$/, ' and $1') : '';
+  var dims = size ? size.replace(/\s*(?:ft|feet|')\s*$/i, '').split(/\s*(?:x|\*|×|by)\s*/i) : null;
+  if (job && place) job += ' in the ' + (dims ? dims[0] + "' x " + dims[1] + "' " : '') + place.en;
+  var ru = hits.slice(0, 3).map(function (h) { return h.ru; }).join(' + ');
+  if (place) ru += (ru ? ' · ' : '') + place.ru;
+  if (dims) ru += ' · ' + dims[0] + '×' + dims[1];
+  return {
+    service: hits.length ? hits[0].svc : 'Other',
+    job: job,
+    summary: ru ? ru.charAt(0).toUpperCase() + ru.slice(1) : '',
+    area: area ? area + ' Calgary' : ''
+  };
+}
+
+function analyzeLead_(text) {
+  var base = analyzeRules_(text);
+  var key = prop_('ANTHROPIC_API_KEY', '');
+  if (!key || !text) return base;
+  try {
+    var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify({
+        model: prop_('CLAUDE_MODEL', 'claude-sonnet-5-5'), max_tokens: 300,
+        system: 'You classify home-renovation leads for a Calgary contractor. Reply with JSON only.',
+        messages: [{ role: 'user', content: 'Client message:\n"""' + String(text).slice(0, 2500) + '"""\n\nReturn JSON with keys: ' +
+          'service (one of: "Drywall & taping","Framing & insulation","Interior painting","Plumbing","Repairs & handyman","Renovation","Other"), ' +
+          'job (short English noun phrase, max 8 words, lowercase, fits "regarding {job}", e.g. "basement framing and drywall"), ' +
+          'summary_ru (max 8 words in Russian: what, where, size if given), ' +
+          'area (Calgary quadrant or town if mentioned, e.g. "SW Calgary", else "").' }]
+      })
+    });
+    if (res.getResponseCode() !== 200) return base;
+    var txt = (JSON.parse(res.getContentText()).content || []).map(function (c) { return c.text || ''; }).join('');
+    var j = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+    return {
+      service: j.service || base.service, job: j.job || base.job,
+      summary: j.summary_ru || base.summary, area: j.area || base.area
+    };
+  } catch (e) { return base; }
 }
 
 function parsePlainEmail_(msg, msgs) {
@@ -96,9 +174,10 @@ function writeLead_(id, p) {
   var now = new Date().toISOString();
   var created = p.date ? new Date(p.date).toISOString() : now;
   var noteText = (p.source === 'Website form' ? 'Заявка с сайта' : 'Письмо: ' + (p.subject || '')) + '\n\n' + (p.message || '');
+  var a = analyzeLead_(p.message || '');
   var lead = {
-    name: p.name || '', phone: p.phone || '', email: p.email || '', area: '',
-    source: p.source, service: 'Other', job: '', value: 0,
+    name: p.name || '', phone: p.phone || '', email: p.email || '', area: a.area || '',
+    source: p.source, service: a.service || 'Other', job: a.job || '', summary: a.summary || '', value: 0,
     status: 'new', statusAt: now, followUp: '', reviewAsked: false, reviewAskedAt: '', lostReason: '',
     clientMessage: p.message || '', notes: [{ t: created, text: noteText.slice(0, 3000) }], mailings: {},
     createdAt: created, updatedAt: now, importedFrom: 'gmail'
@@ -202,4 +281,42 @@ function askClaude_(req) {
   var body = JSON.parse(res.getContentText());
   if (res.getResponseCode() !== 200) throw new Error((body.error && body.error.message) || ('Anthropic ' + res.getResponseCode()));
   return (body.content || []).filter(function (c) { return c.type === 'text'; }).map(function (c) { return c.text; }).join('\n').trim();
+}
+
+
+/* ======================= One-off fix for leads imported before the parser fix ======================= */
+/** Re-reads the original Gmail message of each imported lead and fills empty name/phone/email/job/summary. */
+function reparseImported() {
+  var base = 'https://firestore.googleapis.com/v1/projects/' + prop_('FIREBASE_PROJECT_ID') + '/databases/(default)/documents/leads';
+  var auth = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+  var list = JSON.parse(UrlFetchApp.fetch(base + '?pageSize=300', { headers: auth }).getContentText()).documents || [];
+  var fixed = 0;
+  list.forEach(function (d) {
+    var id = d.name.split('/').pop();
+    if (id.indexOf('gm-') !== 0) return;
+    var f = d.fields || {};
+    var cur = function (k) { return f[k] && f[k].stringValue || ''; };
+    var msg; try { msg = GmailApp.getMessageById(id.slice(3)); } catch (e) { return; }
+    if (!msg) return;
+    var p = /squarespace/i.test(msg.getFrom()) ? parseFormEmail_(msg) : parsePlainEmail_(msg, [msg]);
+    if (!p) return;
+    var a = analyzeLead_(p.message || '');
+    var upd = {};
+    if (!cur('name') && p.name) upd.name = p.name;
+    if (!cur('phone') && p.phone) upd.phone = p.phone;
+    if (!cur('email') && p.email) upd.email = p.email;
+    if (!cur('job') && a.job) upd.job = a.job;
+    if (!cur('summary') && a.summary) upd.summary = a.summary;
+    if (!cur('area') && a.area) upd.area = a.area;
+    if ((cur('service') === 'Other' || !cur('service')) && a.service) upd.service = a.service;
+    if (p.message) upd.clientMessage = p.message;
+    var keys = Object.keys(upd);
+    if (!keys.length) return;
+    var mask = keys.map(function (k) { return 'updateMask.fieldPaths=' + k; }).join('&');
+    UrlFetchApp.fetch(base + '/' + encodeURIComponent(id) + '?' + mask, {
+      method: 'patch', contentType: 'application/json', headers: auth, payload: JSON.stringify({ fields: toFields_(upd) })
+    });
+    fixed++;
+  });
+  Logger.log('Updated %s lead(s)', fixed);
 }
