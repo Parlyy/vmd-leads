@@ -6,6 +6,7 @@ import {
 } from "firebase/firestore";
 import { firebaseConfig, claudeUrl as CLAUDE_URL_DEFAULT } from "./config.js";
 import { BUILTIN, CATEGORIES, REVIEW_URL, OUR_PHONE } from "./templates.js";
+import { EXPENSE_CATS, INCOME_CATS, PAY_METHODS, splitGst, money2, periodRange, totals, toTsv } from "./finance.js";
 
 /* ---------- constants ---------- */
 const STATUSES = [
@@ -83,6 +84,7 @@ let mail = { tpl: "mail_review", filter: "won_noreview", picked: null };
 let ai = { forId: null, busy: false, text: "", err: "", channel: "email", instr: "", summary: "" };
 function claudeUrl() { try { return localStorage.getItem("vmd-claude-url") || CLAUDE_URL_DEFAULT || ""; } catch (e) { return CLAUDE_URL_DEFAULT || ""; } }
 let unsubs = [];
+let txs = [], fin = { kind: "quarter", offset: 0, type: "all" };
 try { view = localStorage.getItem("vmd-view") || "board"; } catch (e) {}
 
 function templates() {
@@ -242,6 +244,105 @@ function renderStats() {
   <h3 class="tbl-title">По услуге</h3><div class="tbl-wrap"><table>${head("Услуга")}<tbody>${group("service", SERVICES, SVC_RU)}</tbody></table></div>
   <p class="hint">Заявки считаются по дате добавления. Выручка — сумма на карточках «Выиграли». Просьб об отзыве за период: ${R.filter((L) => L.reviewAsked).length}.</p>` : `<div class="allclear"><b>За этот период заявок нет</b>Выбери период шире или добавь заявки на доске.</div>`}`;
 }
+/* ---------- finance ---------- */
+const leadName = (id) => { const L = id && leads.find((x) => x.id === id); return L ? L.name || "" : ""; };
+function finList() {
+  const P = periodRange(fin.kind, fin.offset);
+  return txs.filter((x) => x.date >= P.from && x.date <= P.to && (fin.type === "all" || x.type === fin.type))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+function renderMoney() {
+  const P = periodRange(fin.kind, fin.offset);
+  const inPeriod = txs.filter((x) => x.date >= P.from && x.date <= P.to);
+  const T = totals(inPeriod);
+  const list = finList();
+  const byCat = {};
+  inPeriod.filter((x) => x.type === "expense").forEach((x) => (byCat[x.category || "Прочее"] = (byCat[x.category || "Прочее"] || 0) + (x.net || 0)));
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const maxCat = Math.max(1, ...cats.map((c) => c[1]));
+  const kinds = [["month", "Месяц"], ["quarter", "Квартал"], ["year", "Год"], ["all", "Всё"]];
+  main().innerHTML = `<div class="pagehead"><h2>Финансы</h2>
+      <button class="btn" data-fin="add-expense">+ Расход</button><button class="btn gold" data-fin="add-income">+ Доход</button></div>
+    <div class="pagehead" style="margin-top:-6px">
+      <div class="chips">${kinds.map(([k, l]) => `<button class="chip" data-fin-kind="${k}" aria-pressed="${fin.kind === k}">${l}</button>`).join("")}</div>
+      ${fin.kind !== "all" ? `<div class="crow"><button class="btn sm" data-fin-step="-1" aria-label="Назад">‹</button><b style="min-width:150px;text-align:center">${esc(P.label)}</b><button class="btn sm" data-fin-step="1" aria-label="Вперёд" ${fin.offset >= 0 ? "disabled" : ""}>›</button></div>` : ""}
+      <button class="btn sm" data-fin="copy" style="margin-left:auto">Скопировать для Excel</button>
+    </div>
+    <div class="kpis six">
+      <div class="kpi"><small>Выручка (без GST)</small><b>${money2(T.income)}</b></div>
+      <div class="kpi"><small>Расходы (без GST)</small><b>${money2(T.expense)}</b></div>
+      <div class="kpi"><small>Прибыль</small><b style="color:${T.profit < 0 ? "var(--bad)" : "var(--ok)"}">${money2(T.profit)}</b></div>
+      <div class="kpi"><small>GST получено с клиентов</small><b>${money2(T.gstIn)}</b></div>
+      <div class="kpi"><small>GST уплачено в расходах (ITC)</small><b>${money2(T.gstOut)}</b></div>
+      <div class="kpi"><small>${T.gstOwing >= 0 ? "GST к оплате в CRA" : "GST к возврату от CRA"}</small><b style="color:${T.gstOwing > 0 ? "var(--warn)" : "var(--ok)"}">${money2(Math.abs(T.gstOwing))}</b></div>
+    </div>
+    ${cats.length ? `<h3 class="tbl-title">Расходы по категориям</h3><div class="tbl-wrap"><table style="min-width:420px"><tbody>${cats.map(([c, v]) => `<tr><td>${esc(c)}</td><td class="barcell"><div class="hbar"><i style="width:${(100 * v) / maxCat}%"></i></div></td><td class="num">${money2(v)}</td><td class="num" style="color:var(--muted)">${T.expense ? Math.round((100 * v) / T.expense) : 0}%</td></tr>`).join("")}</tbody></table></div>` : ""}
+    <div class="pagehead" style="margin-bottom:8px"><h3 class="tbl-title" style="margin:0 auto 0 0">Операции · ${list.length}</h3>
+      <div class="chips">${[["all", "Все"], ["income", "Доходы"], ["expense", "Расходы"]].map(([k, l]) => `<button class="chip" data-fin-type="${k}" aria-pressed="${fin.type === k}">${l}</button>`).join("")}</div></div>
+    ${list.length ? `<div class="tbl-wrap"><table class="txt"><thead><tr><th>Дата</th><th>Категория</th><th>Описание</th><th class="num">Без GST</th><th class="num">GST</th><th class="num">Итого</th></tr></thead><tbody>${list.map((x) => `<tr class="txrow" data-tx="${esc(x.id)}">
+        <td>${fmtDate(x.date)}</td>
+        <td><span class="tag ${x.type === "income" ? "ok" : "gold"}">${x.type === "income" ? "Доход" : "Расход"}</span> ${esc(x.category || "")}</td>
+        <td>${esc(x.description || "")}${x.leadId && leadName(x.leadId) ? ` <span class="saved">· ${esc(leadName(x.leadId))}</span>` : ""}</td>
+        <td class="num">${x.type === "expense" ? "−" : ""}${money2(x.net)}</td><td class="num">${money2(x.gst)}</td><td class="num"><b>${money2(x.total)}</b></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="allclear"><b>Операций за этот период нет</b>Добавь расход (материалы, бензин, реклама…) или доход — GST посчитается сам.</div>`}
+    <p class="hint" style="margin-top:12px">GST 5% (Альберта). Для расходов вводи сумму из чека с GST — приложение само выделит налог (ITC). Это рабочий учёт для вас; официальную отчётность и подачу GST в CRA сверяй с QuickBooks или бухгалтером.</p>`;
+}
+function saveTx(t) { const body = Object.assign({}, t); delete body.id; return enqueue("t2:" + t.id, () => setDoc(doc(db, "transactions", t.id), body)); }
+function editTx(id, preset) {
+  const x = id ? txs.find((t) => t.id === id) : Object.assign({ id: "", type: "expense", date: todayStr(), category: "", description: "", method: "Карта", leadId: "", includesGst: true, noGst: false, amount: "" }, preset || {});
+  if (!x) return;
+  const st = { type: x.type, includesGst: x.includesGst !== false, noGst: !!x.noGst };
+  const leadOpts = leads.filter((L) => L.status === "won" || L.status === "quoted" || L.id === x.leadId);
+  const draw = () => {
+    const cats = st.type === "income" ? INCOME_CATS : EXPENSE_CATS;
+    const amt = $("x-amt") ? $("x-amt").value : (x.amount !== undefined && x.amount !== "" ? x.amount : (x.includesGst === false ? x.net : x.total) || "");
+    const cat = $("x-cat") ? $("x-cat").value : x.category;
+    const vals = { date: $("x-date") ? $("x-date").value : x.date, desc: $("x-desc") ? $("x-desc").value : x.description, method: $("x-method") ? $("x-method").value : x.method, lead: $("x-lead") ? $("x-lead").value : x.leadId };
+    const sp = splitGst(String(amt).replace(/[^\d.]/g, ""), st.includesGst, st.noGst);
+    openModal(`<h3>${id ? "Изменить операцию" : st.type === "income" ? "Новый доход" : "Новый расход"}</h3>
+      <div class="chips" style="margin-bottom:12px"><button class="chip" data-xt="expense" aria-pressed="${st.type === "expense"}">Расход</button><button class="chip" data-xt="income" aria-pressed="${st.type === "income"}">Доход</button></div>
+      <div class="grid2">
+        <div class="field"><label for="x-date">Дата</label><input id="x-date" type="date" value="${esc(vals.date)}"></div>
+        <div class="field"><label for="x-cat">Категория</label><select id="x-cat">${cats.map((c) => `<option ${c === cat ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
+        <div class="field full"><label for="x-desc">Описание</label><input id="x-desc" value="${esc(vals.desc)}" placeholder="${st.type === "income" ? "напр. оплата за гипсокартон, Tuscany" : "напр. Home Depot — гипсокартон и шпаклёвка"}"></div>
+        <div class="field"><label for="x-amt">Сумма ($)</label><input id="x-amt" inputmode="decimal" value="${esc(amt)}" placeholder="0.00"></div>
+        <div class="field"><label for="x-method">Оплата</label><select id="x-method">${PAY_METHODS.map((m) => `<option ${m === vals.method ? "selected" : ""}>${esc(m)}</option>`).join("")}</select></div>
+        <div class="field full"><label class="chk"><input type="checkbox" id="x-incl" ${st.includesGst ? "checked" : ""} ${st.noGst ? "disabled" : ""}> Сумма уже включает GST</label>
+          <label class="chk"><input type="checkbox" id="x-nogst" ${st.noGst ? "checked" : ""}> Без GST (страховка, зарплата, банковские комиссии, покупки без GST)</label></div>
+        <div class="field full"><label for="x-lead">Заявка / клиент (необязательно)</label><select id="x-lead"><option value="">—</option>${leadOpts.map((L) => `<option value="${esc(L.id)}" ${L.id === vals.lead ? "selected" : ""}>${esc(L.name || "Без имени")}${L.summary ? " · " + esc(L.summary) : ""}</option>`).join("")}</select></div>
+      </div>
+      <div class="preview" id="x-sum">Без GST <b>${money2(sp.net)}</b> · GST <b>${money2(sp.gst)}</b> · Итого <b>${money2(sp.total)}</b></div>
+      <div class="row">${id ? `<button class="btn danger" data-xm="del">Удалить</button>` : ""}<button class="btn" data-xm="cancel">Отмена</button><button class="btn gold" data-xm="save">Сохранить</button></div>`);
+    $("x-amt").oninput = () => { const s2 = splitGst($("x-amt").value.replace(/[^\d.]/g, ""), st.includesGst, st.noGst); $("x-sum").innerHTML = `Без GST <b>${money2(s2.net)}</b> · GST <b>${money2(s2.gst)}</b> · Итого <b>${money2(s2.total)}</b>`; };
+    $("x-incl").onchange = (e) => { st.includesGst = e.target.checked; draw(); };
+    $("x-nogst").onchange = (e) => { st.noGst = e.target.checked; draw(); };
+  };
+  draw();
+  $("modal").onclick = (e) => {
+    const t = e.target.closest("[data-xt],[data-xm]"); if (!t) return;
+    if (t.dataset.xt) { if (st.type !== t.dataset.xt) { st.type = t.dataset.xt; st.includesGst = t.dataset.xt === "expense"; draw(); } return; }
+    const a = t.dataset.xm;
+    if (a === "cancel") return closeModal();
+    if (a === "del") {
+      if (t.dataset.armed) { txs = txs.filter((q) => q.id !== id); closeModal(); render(); enqueue("t2:" + id, () => deleteDoc(doc(db, "transactions", id))).then(() => toast("Операция удалена")); }
+      else { t.dataset.armed = "1"; t.textContent = "Точно удалить?"; }
+      return;
+    }
+    if (a === "save") {
+      const amount = $("x-amt").value.replace(/[^\d.]/g, "");
+      if (!(Number(amount) > 0)) { $("x-amt").focus(); toast("Введи сумму"); return; }
+      const sp = splitGst(amount, st.includesGst, st.noGst);
+      const tid = id || doc(collection(db, "transactions")).id;
+      const t2 = { id: tid, type: st.type, date: $("x-date").value || todayStr(), category: $("x-cat").value, description: $("x-desc").value.trim(), method: $("x-method").value,
+        leadId: $("x-lead").value, includesGst: st.includesGst, noGst: st.noGst, amount: Number(amount), net: sp.net, gst: sp.gst, total: sp.total,
+        createdAt: (id && x.createdAt) || nowIso(), updatedAt: nowIso(), by: (auth.currentUser && auth.currentUser.email) || "" };
+      const i = txs.findIndex((q) => q.id === tid); if (i >= 0) txs[i] = t2; else txs.push(t2);
+      closeModal(); render(); if (openId) renderSheet();
+      saveTx(t2).then(() => toast(st.type === "income" ? "Доход записан" : "Расход записан"));
+    }
+  };
+}
+
 function render() {
   if (!loaded) return;
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === view));
@@ -250,7 +351,7 @@ function render() {
     main().innerHTML = `<div class="onboard"><b>Заявок пока нет</b><p>Добавляй сюда каждую заявку: с сайта, звонки, Google Maps, Yelp, рекомендации. Потом двигай её по доске. Если есть резервная копия — меню ⋯ → «Импорт из файла».</p><button class="btn gold" data-act="add">+ Добавить первую заявку</button></div>`;
     return;
   }
-  ({ board: renderBoard, today: renderToday, replies: renderReplies, mail: renderMail, stats: renderStats }[view] || renderBoard)();
+  ({ board: renderBoard, today: renderToday, replies: renderReplies, mail: renderMail, stats: renderStats, money: renderMoney }[view] || renderBoard)();
 }
 
 /* ---------- lead sheet ---------- */
@@ -267,6 +368,8 @@ function renderSheet() {
     <div class="quick"><span class="saved" style="align-self:center">Напомнить:</span>
       <button class="btn sm" data-fu="0">Сегодня</button><button class="btn sm" data-fu="1">Завтра</button><button class="btn sm" data-fu="3">+3 дня</button><button class="btn sm" data-fu="7">+1 неделя</button>${L.followUp ? `<button class="btn sm ghost" data-fu="clear">Убрать (${fmtDate(L.followUp)})</button>` : ""}
     </div></div>
+  ${L.status === "won" ? (() => { const paid = txs.filter((t) => t.leadId === L.id && t.type === "income"); const sum = paid.reduce((a, t) => a + (t.total || 0), 0);
+      return `<div class="panel"><h4>Оплата</h4><div class="crow">${paid.length ? `<span>Записано: <b>${money2(sum)}</b> (${paid.length})</span>` : `<span class="saved">Оплата ещё не записана в «Финансы».</span>`}<button class="btn sm ${paid.length ? "" : "gold"}" data-act="addPayment">${paid.length ? "+ Ещё оплата" : L.value ? `Записать ${money(L.value)} + GST` : "Записать оплату"}</button></div></div>`; })() : ""}
   ${L.status === "won" ? `<div class="panel review"><h4>Отзыв в Google</h4><p>${L.reviewAsked ? `Просьбу об отзыве отправили ${L.reviewAskedAt ? fmtDate(L.reviewAskedAt) : ""}.` : "Работа выиграна — отправь просьбу об отзыве, пока клиент доволен."}</p>
     <div class="crow"><button class="btn gold sm" data-pick-tpl="review">Открыть шаблон</button><button class="btn sm" data-act="reviewToggle">${L.reviewAsked ? "Отметить: не отправлено" : "Отметить: отправлено"}</button></div></div>` : ""}
   <div class="panel"><h4>Контакты</h4><div style="display:flex;flex-direction:column;gap:8px">
@@ -359,6 +462,7 @@ function wireSheet() {
       case "tplCopy": copy(text); break;
       case "tplEmail": openUrl(mailto(L.email, T.subject, text)); break;
       case "tplSms": copy(text); openUrl(smsUrl(L.phone, text)); break;
+      case "addPayment": editTx(null, { type: "income", category: "Оплата за работу", includesGst: false, amount: L.value || "", leadId: L.id, description: (L.summary || L.job || "") + (L.area ? ", " + L.area : ""), method: "E-transfer" }); break;
       case "reviewToggle": { const on = !L.reviewAsked; patch(L.id, { reviewAsked: on, reviewAskedAt: on ? nowIso() : "", notes: addNote(L, on ? "Просьба об отзыве отправлена" : "Отметка об отзыве снята") }); renderSheet(); break; }
       case "addNote": { const ta = $("noteIn"); const t = ta.value.trim(); if (!t) return; patch(L.id, { notes: addNote(L, t) }); renderSheet(); break; }
       case "del": delArm = true; renderSheet(); break;
@@ -440,7 +544,7 @@ function setView(v) { view = v; try { localStorage.setItem("vmd-view", v); } cat
 
 /* ---------- backup ---------- */
 async function exportBackup() {
-  const data = JSON.stringify({ exportedAt: nowIso(), leads: leads.map((L) => Object.assign({}, L)), templates: Object.values(tplOverrides) }, null, 2);
+  const data = JSON.stringify({ exportedAt: nowIso(), leads: leads.map((L) => Object.assign({}, L)), templates: Object.values(tplOverrides), transactions: txs.map((t) => Object.assign({}, t)) }, null, 2);
   const name = "vmd-leads-backup-" + todayStr() + ".json";
   if (window.vmd) { const p = await window.vmd.saveJson(name, data); if (p) toast("Копия сохранена"); }
 }
@@ -456,6 +560,8 @@ async function importBackup() {
   try {
     for (const ch of chunks) { const b = writeBatch(db); ch.forEach((L) => { const id = L.id || doc(collection(db, "leads")).id; const body = Object.assign({}, L); delete body.id; b.set(doc(db, "leads", id), body); }); await b.commit(); }
     if (tpls.length) { const b = writeBatch(db); tpls.forEach((t) => t.id && b.set(doc(db, "templates", t.id), t)); await b.commit(); }
+    const trs = (!Array.isArray(j) && j.transactions) || [];
+    for (let i = 0; i < trs.length; i += 400) { const b = writeBatch(db); trs.slice(i, i + 400).forEach((t) => { if (!t.id) return; const body = Object.assign({}, t); delete body.id; b.set(doc(db, "transactions", t.id), body); }); await b.commit(); }
     toast("Импортировано: " + arr.length + " заявок");
   } catch (e) { console.error(e); toast("Импорт не удался — проверь доступ"); }
 }
@@ -484,6 +590,7 @@ function wireApp() {
   const m = main();
   m.addEventListener("click", (e) => {
     const c = e.target.closest(".card"); if (c) { openSheet(c.dataset.id); return; }
+    const tr = e.target.closest(".txrow"); if (tr) { editTx(tr.dataset.tx); return; }
     const t = e.target.closest("[data-range]"); if (t) { statsRange = t.dataset.range; render(); return; }
     const cat = e.target.closest("[data-cat]"); if (cat) { replyCat = cat.dataset.cat; render(); return; }
     const ct = e.target.closest("[data-copy-tpl]"); if (ct) { copy(fill(tplById(ct.dataset.copyTpl).body, {})); return; }
@@ -492,6 +599,12 @@ function wireApp() {
     const act = b.dataset.act;
     if (act === "add") return addLead();
     if (act === "newTpl") return editTemplate(null);
+    if (b.dataset.fin === "add-expense") return editTx(null, { type: "expense", includesGst: true });
+    if (b.dataset.fin === "add-income") return editTx(null, { type: "income", includesGst: false, category: "Оплата за работу", method: "E-transfer" });
+    if (b.dataset.fin === "copy") { copy(toTsv(finList(), leadName)); return; }
+    if (b.dataset.finKind) { fin.kind = b.dataset.finKind; fin.offset = 0; render(); return; }
+    if (b.dataset.finStep) { fin.offset = Math.min(0, fin.offset + Number(b.dataset.finStep)); render(); return; }
+    if (b.dataset.finType) { fin.type = b.dataset.finType; render(); return; }
     // mailing
     const T = tplById(mail.tpl);
     const lead = (id) => leads.find((x) => x.id === id);
@@ -542,9 +655,10 @@ function startData(user) {
     if (!editing || view !== "board") render();
     if (openId && !editing) renderSheet();
   }, (err) => { console.error(err); loaded = true; banner(err.code === "permission-denied" ? "Нет доступа к заявкам. Проверь, что твой email есть в правилах Firestore." : "Заявки не загрузились: " + err.message); render(); }));
+  unsubs.push(onSnapshot(collection(db, "transactions"), (snap) => { txs = snap.docs.map((d) => Object.assign({ id: d.id }, d.data())); if (view === "money" && $("modalBg").hidden) render(); if (openId) renderSheet(); }, (err) => console.error(err)));
   unsubs.push(onSnapshot(collection(db, "templates"), (snap) => { tplOverrides = {}; snap.docs.forEach((d) => (tplOverrides[d.id] = Object.assign({ id: d.id }, d.data()))); if (view === "replies" || view === "mail") render(); if (openId) renderSheet(); }, (err) => console.error(err)));
 }
-function stopData() { unsubs.forEach((u) => u()); unsubs = []; leads = []; tplOverrides = {}; loaded = false; }
+function stopData() { unsubs.forEach((u) => u()); unsubs = []; leads = []; txs = []; tplOverrides = {}; loaded = false; }
 
 function wireUpdates() {
   if (!window.vmd || !window.vmd.onUpdateReady) return;

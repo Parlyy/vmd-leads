@@ -1,0 +1,10 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1360,height:900}});
+const errs=[];p.on('pageerror',e=>errs.push(e.message));
+await p.goto('file://'+process.cwd()+'/test/out/index.html');await p.waitForTimeout(700);
+await p.click('[data-view="money"]');await p.click('[data-fin-kind="month"]');await p.waitForTimeout(300);await p.screenshot({path:'test/money.png'});
+await p.click('[data-fin="add-expense"]');await p.fill('#x-amt','105');await p.waitForTimeout(200);await p.screenshot({path:'test/money-modal.png'});
+await p.click('[data-xm="save"]');await p.waitForTimeout(400);
+await p.click('[data-view="board"]');await p.click('.card:has-text("Sarah")');await p.waitForTimeout(400);
+await p.click('[data-act="addPayment"]');await p.waitForTimeout(300);await p.screenshot({path:'test/money-pay.png'});
+const sum=await p.textContent('#x-sum');console.log('pay preview:',sum,'errors',JSON.stringify(errs));await b.close()})();

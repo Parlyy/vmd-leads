@@ -1,7 +1,9 @@
-const store={leads:{},templates:{}};const subs={leads:[],templates:[]};let n=0;
+const store={leads:{},templates:{},transactions:{}};const subs={leads:[],templates:[],transactions:[]};let n=0;
 const now=Date.now();
 const seed=[["Brandt","Yelp","Plumbing","a soft water system installation","contacted",0,""],["Dina","Yelp","Repairs & handyman","a door handle replacement","contacted",0,""],["Sarah Klein","Google Maps","Drywall & taping","a drywall patch in the basement","won",450,"403-555-0182"],["Mark Ellis","Website form","Interior painting","painting two bedrooms","quoted",1200,"587-555-0144"],["Priya N.","Google Ads call","Repairs & handyman","door hardware","new",0,"825-555-0199"]];
 seed.forEach((s,i)=>{store.leads["s"+i]={name:s[0],source:s[1],service:s[2],job:s[3],status:s[4],value:s[5],phone:s[6],email:i==2?"sarah@example.com":"",area:"",followUp:i==3?"2026-11-12":"",reviewAsked:false,notes:[],createdAt:new Date(now-(i+1)*86400000*1.3).toISOString(),updatedAt:new Date(now-i*3600000).toISOString()}});
+const d0=new Date();const dd=(n)=>{const x=new Date(d0);x.setDate(x.getDate()-n);return x.toLocaleDateString("en-CA")};
+[["income","Оплата за работу","Drywall patch",450,22.5,472.5,"s2",2],["expense","Материалы","Home Depot — drywall",171.43,8.57,180,"",3],["expense","Топливо и авто","Shell",57.14,2.86,60,"",5],["expense","Реклама и маркетинг","Google Ads",300,15,315,"",9],["expense","Страховка и лицензии","Insurance",120,0,120,"",12]].forEach((r,i)=>{store.transactions["t"+i]={type:r[0],category:r[1],description:r[2],net:r[3],gst:r[4],total:r[5],leadId:r[6],date:dd(r[7]),method:"Карта",createdAt:new Date().toISOString()}});
 const snap=(c)=>({metadata:{fromCache:false},docs:Object.entries(store[c]).map(([id,d])=>({id,data:()=>d}))});
 const emit=(c)=>subs[c].forEach(f=>f(snap(c)));
 export const initializeFirestore=()=>({});export const persistentLocalCache=()=>({});export const persistentSingleTabManager=()=>({});
